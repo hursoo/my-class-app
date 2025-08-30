@@ -1,0 +1,5 @@
+# 구글 클라우드 비밀 키 파일 무시
+*.json
+
+# 스트림릿 비밀 정보 파일 무시
+.streamlit/secrets.toml
