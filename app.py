@@ -221,8 +221,127 @@ with tab1:
         1. 역사학 논문 쓰기를 단계별로 진행한다.  
         2. 연구계획 수립부터 연구사 정리, 사료 정리, 초고 작성, 논문 형식 준수 등 논문 쓰기의 기본을 익힌다.  
         3. 자신의 연구 주제에 관하여 동료 수강생들과 원활하게 의사 소통한다.  
+    - **강의 방식:** 개인별 프로젝트 수행
     - **평가 방법:** 출석(10%), 과제(60%), 최종 연구계획서(30%)
-    """)
+        1. 출석: 수업일수의 1/3을 초과하여 결석하면 성적은 "F" 또는 "U"가 됨  
+           (담당교수가 불가피한 결석으로 인정하는 경우는 예외로 할 수 있음)
+        2. 과제: 
+            - 프로젝트 단계별 수행 여부를 최우선시 함. 
+            - 최초에 개인별로 60점을 부여 -> 단계별로 감정 요건 기준에 해당하면 정해진 점수만큼 감점.
+        3. 최종 연구계획서: 평가기준에 따라 질적 평가""")
+    
+
+    st.markdown("---")
+    st.subheader("⚠️ 감점 기준표")
+
+    # 평가표를 위한 HTML 및 CSS 코드 (수정된 부분)
+    grading_table_html = """
+    <style>
+        .grading-table {
+            /* 이 부분을 60%로 수정하고, 가운데 정렬을 추가합니다 */
+            width: 60%;
+            margin: 0 auto; 
+            border-collapse: collapse;
+            margin-top: 20px;
+            font-size: 0.95em;
+        }
+        .grading-table th, .grading-table td {
+            border: 1px solid #cccccc;
+            padding: 10px;
+            text-align: center;
+            vertical-align: middle;
+        }
+        .grading-table th {
+            background-color: #f2f2f2;
+            font-weight: bold;
+        }
+        .grading-table td.left-align {
+            text-align: left;
+        }
+    </style>
+    <table class="grading-table">
+        <thead>
+            <tr>
+                <th>항목</th>
+                <th>감점 요건</th>
+                <th>감점 점수</th>
+                <th>감점 요건 기준</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><b>발표</b></td>
+                <td>불이행</td>
+                <td>-5</td>
+                <td class="left-align">정해진 날짜 발표 펑크</td>
+            </tr>
+            <tr>
+                <td><b>면담</b></td>
+                <td>불이행</td>
+                <td>-5</td>
+                <td class="left-align">교수 날인 한 면담지 기한 내 미제출</td>
+            </tr>
+            <tr>
+                <td><b>글쓰기</b></td>
+                <td>기한 내 불이행</td>
+                <td>-5</td>
+                <td class="left-align">글쓰기 지도 받은 기록 기한 내 미제출</td>
+            </tr>
+            <tr>
+                <td rowspan="3"><b>제출</b></td>
+                <td>미제출</td>
+                <td>-4</td>
+                <td class="left-align">수업 시간까지 미제출</td>
+            </tr>
+            <tr>
+                <td>지각</td>
+                <td>-2</td>
+                <td class="left-align">마감 기한 내 미제출</td>
+            </tr>
+            <tr>
+                <td>미비</td>
+                <td>-1</td>
+                <td class="left-align">형식 요건을 갖추지 못함</td>
+            </tr>
+            <tr>
+                <td rowspan="2"><b>출결</b></td>
+                <td>결석</td>
+                <td>-1</td>
+                <td class="left-align">유계 결석은 제외</td>
+            </tr>
+            <tr>
+                <td>지각</td>
+                <td>-0.3</td>
+                <td class="left-align">출석 전체 호명 종료 후 출석</td>
+            </tr>
+            <tr>
+                <td rowspan="4"><b>기말</b></td>
+                <td>미제출</td>
+                <td>F</td>
+                <td class="left-align">성적 마감일까지 제출하지 않은 경우</td>
+            </tr>
+            <tr>
+                <td>지각제출</td>
+                <td>-15</td>
+                <td class="left-align">기한 후 제출한 경우</td>
+            </tr>
+            <tr>
+                <td>형식 미비</td>
+                <td>-10 ~ -5</td>
+                <td class="left-align">주요 항목 최소 1가지 이상 누락 혹은 정해진 규격 기준 분량이 1/2 미만</td>
+            </tr>
+            <tr>
+                <td>내용 미흡</td>
+                <td>-10 ~ -5</td>
+                <td class="left-align">인용 윤리 위반 / 챗지피티 무단 활용 등</td>
+            </tr>
+        </tbody>
+    </table>
+    """
+    st.markdown(grading_table_html, unsafe_allow_html=True)
+ 
+
+
 
 # --- Tab 2: 주차별 강의 (디자인 개선) ---
 with tab2:
