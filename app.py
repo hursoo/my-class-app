@@ -3,6 +3,16 @@ import pandas as pd
 import gspread
 from google.oauth2.service_account import Credentials
 from datetime import datetime # <-- 이 부분이 추가되었습니다.
+from pathlib import Path
+SA_PATH = Path(__file__).parent / ".streamlit" / "clever-circlet-237312-ba0859893ad2.json"
+
+
+# === 추가: GSheetsConnection 사용 가능하면 먼저 시도 ===
+try:
+    from streamlit_gsheets import GSheetsConnection
+    HAS_GSHEETS_CONN = True
+except Exception:
+    HAS_GSHEETS_CONN = False
 
 
 # --------------------
@@ -56,7 +66,37 @@ row_spans = df_schedule['단계'].ne('').cumsum()
 df_schedule['rowspan'] = row_spans.map(row_spans.value_counts())
 
 
-# --- 구글 시트 데이터 로드 함수 ---
+# --- 공용: 시트 읽기 (GSheetsConnection 우선, 실패 시 gspread로 폴백) ---
+@st.cache_data(ttl=15)
+def read_sheet_df(sheet_url: str, worksheet: str):
+    errors = []
+
+    # 1) streamlit_gsheets 우선 시도 (secrets에 [connections.gsheets]가 있을 때)
+    if HAS_GSHEETS_CONN and "connections" in st.secrets and "gsheets" in st.secrets["connections"]:
+        try:
+            conn: GSheetsConnection = st.connection("gsheets", type=GSheetsConnection)
+            df = conn.read(spreadsheet=sheet_url, worksheet=worksheet, ttl=5)
+            if isinstance(df, pd.DataFrame):
+                return df
+        except Exception as e:
+            errors.append(f"GSheetsConnection 실패: {e}")
+
+    # 2) gspread 서비스 계정 폴백 (secrets에 [gcp_service_account]가 있을 때)
+    try:
+        scopes = [
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive",
+        ]
+        creds_dict = st.secrets["gcp_service_account"]  # 없으면 KeyError
+        creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+        gc = gspread.authorize(creds)
+        ws = gc.open_by_url(sheet_url).worksheet(worksheet)
+        data = ws.get_all_records()
+        return pd.DataFrame(data)
+    except Exception as e:
+        errors.append(f"gspread 실패: {e}")
+        return " | ".join(errors)
+
 @st.cache_data(ttl=15)
 def load_schedule_data(sheet_url):
     try:
@@ -64,70 +104,74 @@ def load_schedule_data(sheet_url):
             "https://www.googleapis.com/auth/spreadsheets",
             "https://www.googleapis.com/auth/drive",
         ]
-        creds_dict = st.secrets["gcp_service_account"]
-        creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+        # JSON 파일에서 바로 로드 (복붙/개행 이슈 없음)
+        creds = Credentials.from_service_account_file(str(SA_PATH), scopes=scopes)
         gc = gspread.authorize(creds)
-        spreadsheet = gc.open_by_url(sheet_url)
-        worksheet = spreadsheet.worksheet("발표일정") # 시트 이름
-        data = worksheet.get_all_records()
+
+        ws = gc.open_by_url(sheet_url).worksheet("발표일정")  # 시트 탭 이름
+        data = ws.get_all_records()
         df = pd.DataFrame(data)
+
         if not df.empty:
-            df = df.iloc[1:].reset_index(drop=True)
+            # 1행이 안내/머릿글인 경우 한 줄 내림(필요한 경우에만)
+            if len(df) > 0 and (df.iloc[0].astype(str) == df.columns).any():
+                df = df.iloc[1:].reset_index(drop=True)
             if '순번' in df.columns:
                 df['순번'] = pd.to_numeric(df['순번'], errors='coerce').astype('Int64')
         return df
     except Exception as e:
         return str(e)
+    
 
 
-# 'Q&A' 시트 로드 전용 함수
 @st.cache_data(ttl=15)
 def load_qna_data(sheet_url):
     try:
-        scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-        creds_dict = st.secrets["gcp_service_account"]
-        creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+        scopes = [
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive",
+        ]
+        creds = Credentials.from_service_account_file(str(SA_PATH), scopes=scopes)
         gc = gspread.authorize(creds)
-        spreadsheet = gc.open_by_url(sheet_url)
-        worksheet = spreadsheet.worksheet("Questions")
 
-        data = worksheet.get_all_records()
-        # 데이터가 없을 경우, 올바른 헤더를 가진 빈 DataFrame 반환
+        ws = gc.open_by_url(sheet_url).worksheet("Questions")
+        data = ws.get_all_records()
+        required = ["Timestamp", "Name", "Question", "Answer"]
         if not data:
-            return pd.DataFrame(columns=["Timestamp", "Name", "Question", "Answer"])
-
+            return pd.DataFrame(columns=required)
         df = pd.DataFrame(data)
-        # 만약을 위해 필수 컬럼이 모두 있는지 확인
-        required_cols = ["Timestamp", "Name", "Question", "Answer"]
-        if not all(col in df.columns for col in required_cols):
-             return pd.DataFrame(columns=required_cols) # 헤더가 잘못된 경우
+        if not all(c in df.columns for c in required):
+            return pd.DataFrame(columns=required)
         return df
     except Exception as e:
         return str(e)
 
+    
 
 def save_question_to_gsheet(sheet_url, name, question):
     try:
-        scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-        creds_dict = st.secrets["gcp_service_account"]
-        creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+        scopes = [
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive",
+        ]
+        creds = Credentials.from_service_account_file(str(SA_PATH), scopes=scopes)
         gc = gspread.authorize(creds)
-        spreadsheet = gc.open_by_url(sheet_url)
-        worksheet = spreadsheet.worksheet("Questions")
 
-        # 시트의 첫 행을 읽어 헤더가 올바른지 확인
-        header = worksheet.row_values(1) if worksheet.row_count > 0 else []
+        ws = gc.open_by_url(sheet_url).worksheet("Questions")
+        # 완전 빈 시트일 때만 헤더 생성
+        header = ws.row_values(1) if ws.row_count > 0 else []
         if header != ["Timestamp", "Name", "Question", "Answer"]:
-            # 헤더가 없거나 다를 경우, 시트가 비어있을 때만 헤더를 추가
-            if not worksheet.get_all_values():
-                worksheet.append_row(["Timestamp", "Name", "Question", "Answer"])
+            if not ws.get_all_values():
+                ws.append_row(["Timestamp", "Name", "Question", "Answer"])
 
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        worksheet.append_row([timestamp, name, question, ""])
+        from datetime import datetime
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        ws.append_row([ts, name, question, ""])
         return True
     except Exception as e:
         st.error(f"질문 저장 실패: {e}")
         return False
+    
 
 
 # --- 스타일이 적용된 HTML 테이블 생성 함수 (사용자님 내용 그대로 유지) ---
@@ -342,106 +386,75 @@ with tab1:
  
 
 
-
-# --- Tab 2: 주차별 강의 (디자인 개선) ---
+# --- Tab 2: 주차별 강의 (세부강의일정 임베드 + 캐시버스터) ---
 with tab2:
     st.header("🗓️ 주차별 강의 계획")
+    st.info("구글 시트 '세부강의일정'을 '웹에 게시(Publish to the web)' 링크로 임베드합니다. 새로고침 버튼은 캐시를 우회합니다.")
 
-    table_css = """
-    <style>
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            border: 2px solid #333;
-        }
-        th {
-            background-color: #f2f2f2;
-            text-align: center;
-            font-weight: bold;
-            border: 1px solid #333;
-            padding: 8px;
-        }
-        td {
-            border: 1px solid #333;
-            padding: 8px;
-            text-align: left;
-            vertical-align: middle;
-        }
-        tr:hover {
-            background-color: #f5f5f5;
-        }
-    </style>
-    """
-    st.markdown(table_css, unsafe_allow_html=True)
+    # 1) '웹에 게시'에서 복사한 iframe의 src를 여기에 붙여넣으세요.
+    DETAIL_EMBED_SRC = "https://docs.google.com/spreadsheets/d/e/2PACX-1vR-7ESO9FAkuSbxl0BbqFvtIyVnVi_Rhk7lW2Nf54jQV90p2IaHk_OijM2eSy3R-nLYSSAs3_X7YUQM/pubhtml?gid=0&amp;single=true&amp;widget=true&amp;headers=false"
+    #    ↑ 반드시 /d/e/.../pubhtml?... 형태여야 하며, 편집 URL(/edit...)은 안 됩니다.
 
-    header_html = "<tr>"
-    for col in df_schedule.columns:
-        if col != 'rowspan':
-            header_html += f"<th>{col}</th>"
-    header_html += "</tr>"
+    # 2) HTML 엔티티 정리 (&amp; → &)
+    DETAIL_EMBED_SRC = DETAIL_EMBED_SRC.replace("&amp;", "&")
 
-    body_html = ""
-    for index, row in df_schedule.iterrows():
-        body_html += "<tr>"
-        
-        if row['단계'] != '':
-            body_html += f"<td rowspan='{row['rowspan']}'>{row['단계']}</td>"
-        
-        for col in df_schedule.columns:
-            if col not in ['단계', 'rowspan']:
-                cell_value = row[col]
-                if col == '일자' and cell_value == '10.07':
-                    body_html += f'<td><font color="red">{cell_value}</font></td>'
-                else:
-                    body_html += f"<td>{cell_value}</td>"
+    # 3) 높이 지정(필요하면 조절)
+    h = st.slider("임베드 창 높이", min_value=600, max_value=1200, value=900, step=50)
 
-        body_html += "</tr>"
+    # 4) 캐시버스터용 nonce (세션 상태)
+    if "detail_nonce" not in st.session_state:
+        st.session_state.detail_nonce = 0
 
-    full_html = f"<table><thead>{header_html}</thead><tbody>{body_html}</tbody></table>"
-    st.markdown(full_html, unsafe_allow_html=True)
+    col1, col2 = st.columns([1, 1])
+    with col1:
+        if st.button("🔄 새로고침", help="URL 뒤에 nonce를 붙여 강제 재로딩합니다."):
+            st.session_state.detail_nonce += 1
+    with col2:
+        st.link_button("🗗 새 창에서 열기", DETAIL_EMBED_SRC)
 
+    # 5) 매번 다른 쿼리로 강제 리로드 (클라이언트 캐시 우회)
+    src = f"{DETAIL_EMBED_SRC}&t={st.session_state.detail_nonce}"
+    st.components.v1.iframe(src, height=h, scrolling=True)
+
+
+def force_rerun():
+    """Streamlit 버전에 맞춰 안전하게 rerun."""
+    try:
+        import streamlit as st  # 이미 있음
+        st.rerun()  # 신버전
+    except AttributeError:
+        # 구버전 호환 (있을 때만 실행)
+        try:
+            st.experimental_rerun()
+        except Exception:
+            pass
+
+
+
+# --- Tab 5: 실시간 발표 일정 (임베드 + 캐시버스터) ---
 with tab5:
     st.header("📢 실시간 발표 일정")
-    st.info("이곳의 내용은 구글 시트와 실시간으로 연동됩니다.")
-    my_sheet_url = "https://docs.google.com/spreadsheets/d/16dMmgZc9-R-dbW6WrdXBdCAH21AknJJcRmRC54u8CLQ/edit?gid=1293592544#gid=1293592544"
-    result = load_schedule_data(my_sheet_url)
-    if isinstance(result, pd.DataFrame) and not result.empty:
-        df = result.copy()
-        st.markdown("---")
-        col1, col2 = st.columns(2)
-        with col1:
-            sort_column = st.selectbox("**정렬 기준 선택**", options=['정렬 안함', '순번', '성명'], index=0)
-        with col2:
-            sort_order = st.radio("**정렬 순서**", options=['오름차순', '내림차순'], horizontal=True)
-        if sort_column != '정렬 안함':
-            is_ascending = (sort_order == '오름차순')
-            df.sort_values(by=sort_column, ascending=is_ascending, inplace=True, na_position='last')
-        html_table = generate_styled_html_table(df)
-        st.markdown(html_table, unsafe_allow_html=True)
-    else:
-        st.error("구글 시트를 불러오는 데 실패했거나 시트가 비어있습니다.")
-        st.warning("URL, 공유 설정, 시트 이름을 다시 확인해주세요.")
-        if not isinstance(result, pd.DataFrame):
-            st.error(f"상세 에러: {result}")
+    st.info("구글 시트 ‘발표일정’을 '웹에 게시' 링크로 임베드합니다. (원본 스타일, 약간의 반영 지연 가능)")
 
-with tab3:
-    st.header("📚 강의 자료실")
-    st.markdown("수업 관련 참고 자료나 과제 파일을 이곳에 업로드합니다.")
-    st.subheader("주 교재 및 관련 정보")
+    # '웹에 게시' → iframe 코드의 src를 그대로 붙여넣으세요.
+    LIVE_EMBED_SRC = "https://docs.google.com/spreadsheets/d/e/2PACX-1vR-7ESO9FAkuSbxl0BbqFvtIyVnVi_Rhk7lW2Nf54jQV90p2IaHk_OijM2eSy3R-nLYSSAs3_X7YUQM/pubhtml?gid=1293592544&amp;single=true&amp;widget=true&amp;headers=false"
+    LIVE_EMBED_SRC = LIVE_EMBED_SRC.replace("&amp;", "&")  # &amp; → &
 
-    # 열 설정
-    col1, col2 = st.columns(2)
+    if "live_nonce" not in st.session_state:
+        st.session_state.live_nonce = 0
+    colA, colB = st.columns([1, 1])
+    with colA:
+        if st.button("🔄 새로고침(임베드)"):
+            st.session_state.live_nonce += 1   # 캐시버스터
+    with colB:
+        st.link_button("🗗 새 창에서 열기", LIVE_EMBED_SRC)
 
-    with col1:
-        # 1단계에서 images 폴더에 넣은 첫 번째 이미지 파일을 불러옵니다.
-        # "images/book1.jpg"는 실제 파일 이름에 맞게 수정해주세요.
-        st.image("images/역사논문작성법_표지.jpg", caption="주교재: 역사논문 작성법")
-        st.markdown("- [역사논문 작성법 (임경석 저, 푸른역사, 2023)](https://snu-primo.hosted.exlibrisgroup.com/primo-explore/fulldisplay?vid=82SNU&search_scope=ALL&docid=82SNU_INST21901566720002591&lang=ko_KR)")
+    src = f"{LIVE_EMBED_SRC}&t={st.session_state.live_nonce}"
+    st.components.v1.iframe(src, height=900, scrolling=True)
 
-    with col2:
-        # 1단계에서 images 폴더에 넣은 두 번째 이미지 파일을 불러옵니다.
-        # "images/book2.png"는 실제 파일 이름에 맞게 수정해주세요.
-        st.markdown("- [역사논문 작성법 - 블로그 (Eastone / chdi07)](https://blog.naver.com/chdi07/223226944519)")
+
+
+
 
 with tab4:
     st.header("🙋 질의응답 (Q&A)")
